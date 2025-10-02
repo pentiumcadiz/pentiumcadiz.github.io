@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Calendario Semanal (Almuerzo / Cena)</title>
+  <style>
+    :root{
+      --gap:12px;
+      --accent:#3b82f6;
+      --bg:#0f172a;
+      --card:#1e293b;
+      --text:#f1f5f9;
+      --muted:#94a3b8;
+      --border:#334155;
+    }
+    body.light{
+      --bg:#f8fafc;
+      --card:#ffffff;
+      --text:#0f172a;
+      --muted:#64748b;
+      --border:#cbd5e1;
+    }
+    body{
+      font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;
+      margin:20px;
+      background:var(--bg);
+      color:var(--text);
+      transition: background 0.3s, color 0.3s;
+    }
+    h1{font-size:20px;margin:0 0 10px}
+    .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    button{background:var(--accent);color:white;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;transition:background 0.3s,color 0.3s}
+    button.secondary{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+    .week-indicator{font-weight:600;color:var(--muted);margin:0 8px}
+    .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:var(--gap)}
+    .day-card{background:var(--card);padding:10px;border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,0.4);display:flex;flex-direction:column;min-height:200px;border:1px solid var(--border);transition:background 0.3s,border 0.3s}
+    .day-header{font-weight:700;margin-bottom:8px;text-align:center;color:var(--text)}
+    .meal-label{font-size:12px;color:var(--muted);margin-bottom:6px}
+    .cell{flex:1;background:var(--bg);border-radius:8px;padding:6px;min-height:60px;display:flex;flex-direction:column;gap:6px;border:1px dashed var(--border);transition:background 0.3s,border 0.3s}
+    .drop-target.dragover{border-color:var(--accent);background:#1e3a8a}
+    textarea{width:100%;min-height:60px;background:var(--card);color:var(--text);border:1px solid var(--border);padding:8px;border-radius:6px;resize:vertical;font-size:14px;transition:background 0.3s,color 0.3s,border 0.3s}
+    .cell-controls{display:flex;gap:6px;justify-content:flex-start;align-items:center}
+    .small{font-size:12px;color:var(--muted)}
+    footer{margin-top:14px;color:var(--muted);font-size:13px}
+    .file-input{display:none}
+    .controls-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .toggle-mode{margin-left:auto;font-size:18px;line-height:1}
+  </style>
+</head>
+<body>
+  <h1>Calendario semanal — Almuerzo / Cena</h1>
+  <div class="toolbar">
+    <div class="controls-row">
+      <button id="prevWeek">← Semana anterior</button>
+      <span class="week-indicator" id="weekLabel">Semana 0</span>
+      <button id="nextWeek">Semana siguiente →</button>
+    </div>
+    <div style="flex:1"></div>
+    <div class="controls-row">
+      <button id="exportCsv">Exportar CSV</button>
+      <button id="importBtn" class="secondary">Importar CSV</button>
+      <input id="fileInput" class="file-input" type="file" accept=".csv,text/csv" />
+      <button id="clearBtn" type="button" class="secondary icon-btn" title="Vaciar semana" aria-label="Vaciar semana">
+		<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="red" width="20" height="20">
+		<path d="M9 3v1H4v2h16V4h-5V3H9zm-2 6v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9H7zm2 0h6v10H9V9z"/>
+		</svg>
+		</button>
+      <button id="toggleMode" class="secondary toggle-mode">🌙</button>
+    </div>
+  </div>
+
+  <div class="grid" id="calendar"></div>
+
+  
+  <script>
+    (function(){
+      const DAYS = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+      let weekIndex = 0;
+      const storagePrefix = 'menu_week_';
+
+      const calendar = document.getElementById('calendar');
+      const weekLabel = document.getElementById('weekLabel');
+      const prevBtn = document.getElementById('prevWeek');
+      const nextBtn = document.getElementById('nextWeek');
+      const clearBtn = document.getElementById('clearBtn');
+      const exportCsvBtn = document.getElementById('exportCsv');
+      const importBtn = document.getElementById('importBtn');
+      const fileInput = document.getElementById('fileInput');
+      const toggleBtn = document.getElementById('toggleMode');
+
+      function createEmptyWeek(){
+        const week = {};
+        DAYS.forEach(d => week[d] = {almuerzo:'',cena:''});
+        return week;
+      }
+
+      function loadWeek(index){
+        const raw = localStorage.getItem(storagePrefix + index);
+        if(!raw) return createEmptyWeek();
+        try{ return JSON.parse(raw); }catch(e){ return createEmptyWeek(); }
+      }
+
+      function saveWeek(index, data){
+        localStorage.setItem(storagePrefix + index, JSON.stringify(data));
+      }
+
+      function getWeekDates(index){
+        const now = new Date();
+        const currentWeekIndex = getIsoWeek(now);
+        const diffWeeks = index - currentWeekIndex;
+        const monday = startOfIsoWeek(now);
+        monday.setDate(monday.getDate() + diffWeeks*7);
+        const days = [];
+        for(let i=0;i<7;i++){
+          const d = new Date(monday);
+          d.setDate(monday.getDate()+i);
+          days.push(d);
+        }
+        return days;
+      }
+
+      function startOfIsoWeek(date){
+        const d = new Date(date);
+        const day = d.getDay();
+        const diff = (day === 0 ? -6 : 1) - day; // Monday as start
+        d.setDate(d.getDate()+diff);
+        d.setHours(0,0,0,0);
+        return d;
+      }
+
+      function getIsoWeek(date){
+        const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+        const dayNum = d.getUTCDay() || 7;
+        d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+        const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+        return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+      }
+
+      function render(){
+        calendar.innerHTML = '';
+        const weekDates = getWeekDates(weekIndex);
+        weekLabel.textContent = 'Semana ' + weekIndex + ' (' + formatDate(weekDates[0]) + ' - ' + formatDate(weekDates[6]) + ')';
+        const data = loadWeek(weekIndex);
+        DAYS.forEach((day,i) => {
+          const card = document.createElement('div'); card.className='day-card';
+          const header = document.createElement('div'); header.className='day-header';
+          header.textContent = day + ' ' + formatDate(weekDates[i]);
+          card.appendChild(header);
+
+          ['almuerzo','cena'].forEach(meal => {
+            const label = document.createElement('div'); label.className='meal-label'; label.textContent = meal === 'almuerzo' ? 'Almuerzo' : 'Cena';
+            const cell = document.createElement('div'); cell.className='cell drop-target';
+            cell.dataset.day = day; cell.dataset.meal = meal;
+
+            const textarea = document.createElement('textarea'); textarea.value = data[day][meal];
+            textarea.setAttribute('draggable', 'true');
+            textarea.addEventListener('input', () => onEdit(day, meal, textarea.value));
+
+            textarea.addEventListener('dragstart', (e) => {
+              e.dataTransfer.setData('text/plain', textarea.value || '');
+              e.dataTransfer.setData('application/json', JSON.stringify({fromDay:day,fromMeal:meal,value:textarea.value}));
+              requestAnimationFrame(() => textarea.classList.add('dragging'));
+            });
+            textarea.addEventListener('dragend', () => textarea.classList.remove('dragging'));
+
+            textarea.addEventListener('focus', () => textarea.select());
+
+            cell.addEventListener('dragover', (e) => { e.preventDefault(); cell.classList.add('dragover'); });
+            cell.addEventListener('dragleave', () => { cell.classList.remove('dragover'); });
+            cell.addEventListener('drop', (e) => {
+              e.preventDefault(); cell.classList.remove('dragover');
+              const json = e.dataTransfer.getData('application/json');
+              let payload = null;
+              if(json){ try{ payload = JSON.parse(json); }catch(err){} }
+              const incoming = payload && typeof payload.value === 'string' ? payload.value : e.dataTransfer.getData('text/plain');
+              const fromDay = payload && payload.fromDay; const fromMeal = payload && payload.fromMeal;
+              if(fromDay === day && fromMeal === meal) return;
+              setCellValue(day, meal, incoming);
+              if(fromDay && fromMeal) setCellValue(fromDay, fromMeal, '');
+              render();
+            });
+
+            const controls = document.createElement('div'); controls.className='cell-controls';
+            const small = document.createElement('div'); small.className='small'; small.textContent = 'Arrastrar para mover';
+            controls.appendChild(small);
+
+            cell.appendChild(label);
+            cell.appendChild(textarea);
+            cell.appendChild(controls);
+
+            card.appendChild(cell);
+          });
+
+          calendar.appendChild(card);
+        });
+      }
+
+      function onEdit(day, meal, value){
+        const data = loadWeek(weekIndex);
+        data[day][meal] = value;
+        saveWeek(weekIndex, data);
+      }
+
+      function setCellValue(day, meal, value){
+        const data = loadWeek(weekIndex);
+        data[day][meal] = value;
+        saveWeek(weekIndex, data);
+      }
+
+      prevBtn.addEventListener('click', ()=>{ weekIndex--; render(); });
+      nextBtn.addEventListener('click', ()=>{ weekIndex++; render(); });
+      clearBtn.addEventListener('click', ()=>{ if(confirm('¿Vaciar esta semana?')){ saveWeek(weekIndex, createEmptyWeek()); render(); }});
+
+      exportCsvBtn.addEventListener('click', ()=>{
+        const data = loadWeek(weekIndex);
+        const rows = [];
+        rows.push(['Dia','Almuerzo','Cena'].join(';'));
+        DAYS.forEach(d => {
+          rows.push([escapeCsv(d), escapeCsv(data[d].almuerzo), escapeCsv(data[d].cena)].join(';'));
+        });
+        const csv = rows.join('\r\n');
+        const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `semana_${weekIndex}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      });
+
+      importBtn.addEventListener('click', ()=> fileInput.click());
+      fileInput.addEventListener('change', (e)=>{
+        const file = e.target.files[0]; if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev)=>{
+          try{ const parsed = parseCsv(ev.target.result); applyImportedWeek(parsed); alert('Importación completada.'); }
+          catch(err){ alert('Error al importar CSV: ' + err.message); }
+        };
+        reader.readAsText(file,'utf-8');
+        fileInput.value = '';
+      });
+
+      toggleBtn.addEventListener('click', ()=>{
+        document.body.classList.toggle('light');
+        const isLight = document.body.classList.contains('light');
+        localStorage.setItem('theme', isLight ? 'light' : 'dark');
+        toggleBtn.textContent = isLight ? '☀️' : '🌙';
+      });
+
+      function escapeCsv(field){
+        if(field == null) return '';
+        const s = String(field);
+        if(/[;"\n\r]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+        return s;
+      }
+
+      function parseCsv(text){
+        const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(Boolean);
+        if(lines.length === 0) throw new Error('CSV vacío');
+        const rows = lines.map(line => parseCsvLine(line));
+        const header = rows[0].map(h=>h.trim().toLowerCase());
+        const hasHeader = header[0].startsWith('dia');
+        const dataRows = hasHeader ? rows.slice(1) : rows;
+        const result = createEmptyWeek();
+        dataRows.forEach((r)=>{
+          if(r.length < 3) return;
+          const day = r[0].trim();
+          if(!DAYS.includes(day)) return;
+          result[day].almuerzo = r[1] || '';
+          result[day].cena = r[2] || '';
+        });
+        return result;
+      }
+
+      function parseCsvLine(line){
+        const out = [];
+        let cur = ''; let inQuotes = false;
+        for(let i=0;i<line.length;i++){
+          const ch = line[i];
+          if(inQuotes){
+            if(ch === '"'){
+              if(line[i+1] === '"'){ cur += '"'; i++; } else { inQuotes = false; }
+            } else { cur += ch; }
+          } else {
+            if(ch === '"'){ inQuotes = true; }
+            else if(ch === ';'){ out.push(cur); cur = ''; }
+            else { cur += ch; }
+          }
+        }
+        out.push(cur);
+        return out;
+      }
+
+      function applyImportedWeek(imported){
+        saveWeek(weekIndex, imported);
+        render();
+      }
+
+      function formatDate(date){
+        return date.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'});
+      }
+
+      weekIndex = getIsoWeek(new Date());
+
+      // Load theme preference
+      const savedTheme = localStorage.getItem('theme');
+      if(savedTheme === 'light'){
+        document.body.classList.add('light');
+        toggleBtn.textContent = '☀️';
+      } else {
+        toggleBtn.textContent = '🌙';
+      }
+
+      render();
+      window.__weekApp = {loadWeek, saveWeek, createEmptyWeek};
+    })();
+  </script>
+</body>
+</html>
